@@ -88,7 +88,7 @@ CREATE POLICY "Public Access" ON attendance FOR ALL USING (true);
           <div className="bg-amber-50 dark:bg-amber-900/10 p-8 rounded-3xl flex flex-col justify-center border border-amber-100">
              <h4 className="text-[11px] font-black text-amber-700 uppercase mb-4 tracking-widest">Critical Step</h4>
              <p className="text-xs text-amber-800/70 font-bold leading-relaxed">
-               After running the SQL, go to <b>Project Settings > API</b>. <br/><br/>
+               After running the SQL, go to <b>Project Settings &gt; API</b>. <br/><br/>
                You will need the <b>Project URL</b> and the <b>anon public key</b> for the next phase.
              </p>
           </div>
@@ -109,7 +109,7 @@ CREATE POLICY "Public Access" ON attendance FOR ALL USING (true);
             <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
                <span className="text-2xl mb-4 block">🚀</span>
                <h5 className="text-[11px] font-black uppercase mb-2">1. Connect GitHub</h5>
-               <p className="text-[11px] text-slate-500 font-bold">Go to <a href="https://vercel.com" target="_blank" className="text-sky-600 underline">Vercel.com</a> and click <b>"Add New > Project"</b>.</p>
+               <p className="text-[11px] text-slate-500 font-bold">Go to <a href="https://vercel.com" target="_blank" className="text-sky-600 underline">Vercel.com</a> and click <b>"Add New &gt; Project"</b>.</p>
             </div>
             <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100">
                <span className="text-2xl mb-4 block">📂</span>
@@ -143,7 +143,7 @@ CREATE POLICY "Public Access" ON attendance FOR ALL USING (true);
                 <div className="space-y-3 bg-white/5 p-6 rounded-2xl border border-white/10">
                    <label className="text-[9px] font-black uppercase text-slate-500">Variable 1: Database URL</label>
                    <code className="block text-white font-mono text-sm mb-2">VITE_SUPABASE_URL</code>
-                   <p className="text-[9px] italic text-slate-500">From Supabase Project Settings > API</p>
+                   <p className="text-[9px] italic text-slate-500">From Supabase Project Settings &gt; API</p>
                 </div>
 
                 {/* Supabase Key */}
