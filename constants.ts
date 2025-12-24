@@ -1,9 +1,10 @@
+
 import { UserRole, User, TimeSlot, SchoolConfig, SubjectCategory } from './types.ts';
 
 export const SCHOOL_NAME = "Ibn Al Hytham Islamic School";
 export const TARGET_LAT = 26.225310411708836;
 export const TARGET_LNG = 50.51960087112141;
-export const RADIUS_METERS = 30;
+export const RADIUS_METERS = 10;
 
 export const LATE_THRESHOLD_HOUR = 7;
 export const LATE_THRESHOLD_MINUTE = 15;

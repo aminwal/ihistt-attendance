@@ -1,40 +1,56 @@
 import { createClient } from '@supabase/supabase-js';
 
 /**
- * Standard environment variable detection.
- * We check both process.env (common in sandboxes) and import.meta.env (Vite standard)
- * to ensure maximum compatibility with different developer environments.
+ * Bulletproof environment variable resolution for Supabase.
+ * This handles both Vite (import.meta.env) and Node/Sandbox (process.env) environments.
  */
 
-const getEnv = (key: string): string => {
+const getSupabaseConfig = () => {
+  let url = '';
+  let key = '';
+
+  // 1. Try process.env first (Standard for the AI Studio execution environment)
   try {
-    // Try process.env first as per coding guidelines
-    if (typeof process !== 'undefined' && process.env && process.env[key]) {
-      return process.env[key] as string;
-    }
-    // Fallback to import.meta.env if available
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-      // @ts-ignore
-      return import.meta.env[key];
+    if (typeof process !== 'undefined' && process.env) {
+      url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+      key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
     }
   } catch (e) {
-    console.warn(`Error accessing environment variable ${key}:`, e);
+    // process.env not available
   }
-  return '';
+
+  // 2. Try import.meta.env if still missing (Standard for local Vite development)
+  if (!url || !key) {
+    try {
+      // Use type assertion to access Vite-specific env property on import.meta
+      if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+        // We use explicit literal access for Vite's static replacement engine
+        url = url || (import.meta as any).env.VITE_SUPABASE_URL || '';
+        key = key || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
+      }
+    } catch (e) {
+      // import.meta.env not available
+    }
+  }
+
+  return { url, key };
 };
 
-const supabaseUrl = getEnv('VITE_SUPABASE_URL');
-const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
+const { url: supabaseUrl, key: supabaseAnonKey } = getSupabaseConfig();
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    "SUPABASE CONFIGURATION MISSING: Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your Environment Variables (.env file locally or project settings)."
+  console.error(
+    "CRITICAL CONFIGURATION ERROR: Supabase credentials not found.\n" +
+    "Checklist:\n" +
+    "1. Environment Variables must be named: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY\n" +
+    "2. If using Vercel, ensure these are added to Project Settings > Environment Variables.\n" +
+    "3. YOU MUST REDEPLOY on Vercel after adding variables for them to take effect."
   );
+} else {
+  console.info("Supabase infrastructure successfully linked.");
 }
 
-// Fallback to placeholder to prevent the entire app from crashing on start if keys are missing
-// Note: The app will initialize but DB requests will fail gracefully with 401/404.
+// Initialize client with placeholders if keys are missing to prevent application crash at boot.
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder-project.supabase.co', 
   supabaseAnonKey || 'placeholder-key'

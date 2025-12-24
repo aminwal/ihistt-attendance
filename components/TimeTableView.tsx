@@ -99,7 +99,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
       ? selectedClass 
       : (users.find(u => u.id === selectedClass)?.name || 'Teacher');
 
-    // Add generating class to body to trigger specific print/pdf overrides
     document.body.classList.add('is-generating-pdf');
 
     const opt = {
@@ -228,9 +227,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
     setShowEditModal(true);
   };
 
-  /**
-   * Reconciles the Faculty Load (TeacherAssignment) based on manual timetable modifications.
-   */
   const reconcileAssignments = (teacherId: string, grade: string, subject: string, updatedTimetable: TimeTableEntry[]) => {
     const manualCount = updatedTimetable.filter(t => 
       t.id.startsWith('man-') && 
@@ -329,7 +325,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
     }
   };
 
-  // Determine allowed profiles based on roles
   const allowedClasses = useMemo(() => {
     if (isManagement) return config.classes;
     return config.classes.filter(c => c.name === user.classTeacherOf);
@@ -499,7 +494,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
       <div className="bg-white dark:bg-slate-900 rounded-lg shadow border border-gray-100 dark:border-slate-800 overflow-hidden no-print shrink-0 mx-2">
         <div className="p-1.5 flex items-center justify-between gap-3">
           <div className="flex bg-slate-50 dark:bg-slate-800 p-1 rounded-md border border-slate-100 dark:border-slate-700">
-             {/* If not management, only show class view if they are a class teacher */}
              {(isManagement || user.classTeacherOf) && (
                <button 
                 onClick={() => { setViewMode('CLASS'); setNonMgmtView('class'); }} 
@@ -516,7 +510,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
              </button>
           </div>
           
-          {/* Only show selector if management, or if there is actually more than one option (which isn't the case for restricted faculty) */}
           {isManagement && (
             <select 
               className="bg-transparent px-4 py-2 rounded border-none text-[14px] font-black uppercase outline-none dark:text-white min-w-[220px]"
@@ -566,12 +559,12 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
           <div className="flex-1 w-full overflow-auto print:overflow-visible">
             <table className="w-full h-full table-fixed border-collapse print:border-2 print:border-black">
               <thead>
-                <tr className="bg-[#001f3f] dark:bg-slate-950 h-16 print:bg-white print:h-12">
-                  <th className="w-16 md:w-24 border-r border-white/5 print:border-r-2 print:border-black"></th>
+                <tr className="bg-[#00122b] h-16 print:bg-white print:h-12 shadow-sm">
+                  <th className="w-16 md:w-24 border-r border-white/10 print:border-r-2 print:border-black"></th>
                   {slots.map((slot) => (
-                    <th key={slot.id} className="p-1 border-l border-white/5 text-center print:border-l-2 print:border-black">
-                      <p className="text-[14px] md:text-[15.5px] print:text-[11px] font-black text-[#d4af37] print:text-black uppercase tracking-tight truncate">{slot.label}</p>
-                      <p className="text-[11px] md:text-[13px] print:text-[9px] font-bold text-white/40 print:text-black truncate leading-none">{slot.startTime}</p>
+                    <th key={slot.id} className="p-1 border-l border-white/10 text-center print:border-l-2 print:border-black">
+                      <p className="text-[14px] md:text-[15.5px] print:text-[11px] font-black text-white print:text-black uppercase tracking-tight truncate">{slot.label}</p>
+                      <p className="text-[11px] md:text-[13px] print:text-[9px] font-bold text-white/50 print:text-black truncate leading-none">{slot.startTime}</p>
                     </th>
                   ))}
                 </tr>
@@ -579,8 +572,8 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
               <tbody className="h-[calc(100%-4rem)] print:h-auto">
                 {DAYS.map((day) => (
                   <tr key={day} className="h-[20%] border-b border-slate-50 dark:border-slate-800/10 last:border-0 print:border-b-2 print:border-black">
-                    <td className="w-16 md:w-24 bg-[#001f3f] dark:bg-slate-950 border-r border-white/5 text-center p-1 print:bg-white print:border-r-2 print:border-black">
-                      <span className="text-[14px] md:text-[17px] print:text-[12px] font-black text-[#d4af37] print:text-black uppercase tracking-tighter block">{day.substring(0,3)}</span>
+                    <td className="w-16 md:w-24 bg-[#00122b] border-r border-white/10 text-center p-1 print:bg-white print:border-r-2 print:border-black shadow-inner">
+                      <span className="text-[14px] md:text-[17px] print:text-[12px] font-black text-white print:text-black uppercase tracking-tighter block">{day.substring(0,3)}</span>
                     </td>
                     {slots.map((slot) => (
                       <td key={slot.id} className={`p-1 border-l border-slate-50 dark:border-slate-800/10 print:border-l-2 print:border-black ${slot.isBreak ? 'bg-amber-50/10 dark:bg-amber-900/10 print:bg-gray-100' : ''}`}>
@@ -658,7 +651,6 @@ const TimeTableView: React.FC<TimeTableViewProps> = ({ user, users, timetable, s
                   </div>
                 )}
 
-                {/* Conflict Warning UI */}
                 {conflictInfo && (
                   <div className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 rounded-2xl animate-in slide-in-from-top-2">
                     <div className="flex items-center space-x-3 text-red-600 dark:text-red-400">

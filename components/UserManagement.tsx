@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { User, UserRole, SchoolConfig } from '../types.ts';
+import { supabase } from '../supabaseClient.ts';
 
 interface UserManagementProps {
   users: User[];
   setUsers: React.Dispatch<React.SetStateAction<User[]>>;
   config: SchoolConfig;
-  currentUser: User; // Added to handle permissions
+  currentUser: User;
 }
 
 interface UserFormData {
@@ -36,6 +37,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
   const [activeSection, setActiveSection] = useState<'PRIMARY' | 'SECONDARY' | 'ALL'>('ALL');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | 'none'>('none');
+  const [isSyncing, setIsSyncing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = currentUser.role === UserRole.ADMIN;
@@ -96,10 +98,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
 
   const filteredTeachers = useMemo(() => {
     let result = users.filter(u => {
-      // 1. Privacy Rule: Non-Admins NEVER see Admins
       if (!isAdmin && u.role === UserRole.ADMIN) return false;
-
-      // 2. Section Visibility Rules for Incharges
       if (!isAdmin) {
         if (currentUser.role === UserRole.INCHARGE_PRIMARY) {
           const isPrimary = u.role === UserRole.TEACHER_PRIMARY || u.role === UserRole.INCHARGE_PRIMARY;
@@ -109,16 +108,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
           if (!isSecondary && u.id !== currentUser.id) return false;
         }
       }
-
-      // 3. UI Tab Filter
       if (activeSection !== 'ALL') {
         const isPrimary = u.role === UserRole.TEACHER_PRIMARY || u.role === UserRole.INCHARGE_PRIMARY;
         const isSecondary = u.role === UserRole.TEACHER_SECONDARY || u.role === UserRole.TEACHER_SENIOR_SECONDARY || u.role === UserRole.INCHARGE_SECONDARY;
         if (activeSection === 'PRIMARY' && !isPrimary && u.role !== UserRole.INCHARGE_ALL) return false;
         if (activeSection === 'SECONDARY' && !isSecondary && u.role !== UserRole.INCHARGE_ALL) return false;
       }
-
-      // 4. Role Filter
       if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
 
       const searchLower = teacherSearch.toLowerCase().trim();
@@ -131,26 +126,20 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
       );
     });
 
-    // Apply Sorting by Employee ID
     if (sortDirection !== 'none') {
       result.sort((a, b) => {
         const idA = a.employeeId.toLowerCase();
         const idB = b.employeeId.toLowerCase();
-        if (sortDirection === 'asc') {
-          return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
-        } else {
-          return idB.localeCompare(idA, undefined, { numeric: true, sensitivity: 'base' });
-        }
+        if (sortDirection === 'asc') return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+        else return idB.localeCompare(idA, undefined, { numeric: true, sensitivity: 'base' });
       });
     } else {
-      // Default chronological sort by newest first if no sort selected
       result.sort((a, b) => {
         const timeA = a.id.startsWith('usr-') ? parseInt(a.id.split('-')[1]) : 0;
         const timeB = b.id.startsWith('usr-') ? parseInt(b.id.split('-')[1]) : 0;
         return timeB - timeA;
       });
     }
-
     return result;
   }, [users, activeSection, teacherSearch, currentUser, isAdmin, sortDirection, roleFilter]);
 
@@ -162,12 +151,27 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const syncUserToCloud = async (u: User) => {
+    try {
+      await supabase.from('profiles').upsert({
+        id: u.id,
+        employee_id: u.employeeId,
+        name: u.name,
+        email: u.email,
+        password: u.password,
+        role: u.role,
+        class_teacher_of: u.classTeacherOf
+      });
+    } catch (e) {
+      console.error("Cloud Error", e);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
 
-    // Permission check for Incharges trying to create Admins (though role map should prevent it)
     if (!isAdmin && formData.role === UserRole.ADMIN) {
       setError("Security Violation: Unauthorized role assignment.");
       return;
@@ -199,24 +203,26 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
     }
 
     if (editingId) {
-      // Security check: Don't allow editing an Admin if you aren't an Admin
       const targetUser = users.find(u => u.id === editingId);
       if (targetUser?.role === UserRole.ADMIN && !isAdmin) {
         setError("Access Denied: Administrative records are locked.");
         return;
       }
 
-      setUsers(prev => prev.map(u => u.id === editingId ? {
-        ...u,
+      const updatedUser: User = {
+        ...targetUser!,
         name: name.trim(),
         email: email.trim(),
         employeeId: normalizedId,
         password: password.trim(),
         role: role,
         classTeacherOf: classTeacherOf || undefined
-      } : u));
+      };
+
+      setUsers(prev => prev.map(u => u.id === editingId ? updatedUser : u));
+      await syncUserToCloud(updatedUser);
       setEditingId(null);
-      setSuccess("Staff record updated successfully.");
+      setSuccess("Staff record updated successfully in cloud.");
     } else {
       const newUser: User = {
         id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -228,9 +234,34 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
         classTeacherOf: classTeacherOf || undefined
       };
       setUsers(prev => [newUser, ...prev]);
-      setSuccess("New employee registered in the system.");
+      await syncUserToCloud(newUser);
+      setSuccess("New employee registered in the institutional database.");
     }
     setFormData(initialForm);
+  };
+
+  const syncAllToCloud = async () => {
+    setIsSyncing(true);
+    setSuccess(null);
+    setError(null);
+    try {
+      const payload = users.map(u => ({
+        id: u.id,
+        employee_id: u.employeeId,
+        name: u.name,
+        email: u.email,
+        password: u.password,
+        role: u.role,
+        class_teacher_of: u.classTeacherOf
+      }));
+      const { error: syncError } = await supabase.from('profiles').upsert(payload);
+      if (syncError) throw syncError;
+      setSuccess(`Global Sync Success: ${users.length} profiles secured in cloud.`);
+    } catch (e: any) {
+      setError(`Sync Error: ${e.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const downloadExcelTemplate = () => {
@@ -268,10 +299,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
 </Workbook>`;
     const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = "ihis_staff_template.xml";
-    a.click();
+    const a = document.createElement('a'); a.href = url; a.download = "ihis_staff_template.xml"; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -304,7 +332,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
       }
       if (newUsers.length > 0) {
         setUsers(prev => [...newUsers, ...prev]);
-        setSuccess(`Deployment Success: ${newUsers.length} faculty registered.`);
+        setSuccess(`Local Import Success: ${newUsers.length} staff loaded. Click "Sync Cloud" to secure them.`);
       } else {
         setError("Import Error: No valid institutional records found.");
       }
@@ -317,27 +345,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
     const normalizedId = empId.toLowerCase();
     const isExisting = users.some(u => u.employeeId.toLowerCase() === normalizedId) || 
                       list.some(u => u.employeeId.toLowerCase() === normalizedId);
-    if (isExisting) {
-      onSkip();
-      return;
-    }
+    if (isExisting) { onSkip(); return; }
     let finalRole = UserRole.TEACHER_PRIMARY;
     const lookup = roleName.toLowerCase();
-    if (DISPLAY_TO_ROLE[lookup]) {
-      finalRole = DISPLAY_TO_ROLE[lookup];
-    }
-    // Block bulk creation of Admins by non-Admins
-    if (finalRole === UserRole.ADMIN && !isAdmin) {
-      onSkip();
-      return;
-    }
+    if (DISPLAY_TO_ROLE[lookup]) finalRole = DISPLAY_TO_ROLE[lookup];
+    if (finalRole === UserRole.ADMIN && !isAdmin) { onSkip(); return; }
     list.push({
       id: `usr-bulk-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       employeeId: normalizedId,
       password: pwd,
-      name,
-      email,
-      role: finalRole,
+      name, email, role: finalRole,
       classTeacherOf: classTeacher || undefined
     });
   };
@@ -358,7 +375,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const executeDelete = (id: string, e: React.MouseEvent) => {
+  const executeDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const targetUser = users.find(u => u.id === id);
     if (targetUser?.role === UserRole.ADMIN && !isAdmin) {
@@ -366,13 +383,17 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
       return;
     }
     if (id === '1') return alert("Security: Root Administrator cannot be removed.");
+    
     setUsers(prev => prev.filter(u => u.id !== id));
-    if (editingId === id) {
-      setEditingId(null);
-      setFormData(initialForm);
+    try {
+      await supabase.from('profiles').delete().eq('id', id);
+    } catch (e) {
+      console.error("Cloud delete failed", e);
     }
+    
+    if (editingId === id) { setEditingId(null); setFormData(initialForm); }
     setConfirmDeleteId(null);
-    setSuccess("Faculty record has been successfully purged.");
+    setSuccess("Faculty record has been successfully purged from institutional ledger.");
   };
 
   return (
@@ -385,10 +406,14 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
           </p>
         </div>
         <div className="flex items-center space-x-3 bg-white dark:bg-slate-900 p-2 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-800 transition-all">
+           <button type="button" onClick={syncAllToCloud} disabled={isSyncing} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all shadow-sm flex items-center space-x-2 border ${isSyncing ? 'bg-slate-50 text-slate-400' : 'bg-sky-600 text-white hover:bg-sky-700 active:scale-95'}`}>
+             <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+             <span>{isSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
+           </button>
            <button type="button" onClick={downloadExcelTemplate} className="px-5 py-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-sky-50 text-sky-600 text-[10px] font-black uppercase rounded-xl border border-sky-100 transition-all shadow-sm active:scale-95">Template</button>
            <label className="px-6 py-2.5 bg-[#001f3f] text-[#d4af37] text-[10px] font-black uppercase rounded-xl cursor-pointer hover:bg-slate-900 transition-all shadow-lg border-2 border-transparent hover:border-amber-400/20">
              Bulk Deployment
-             <input type="file" ref={fileInputRef} accept=".xml,.csv" className="hidden" onChange={handleBulkUpload} />
+             <input type="file" ref={fileInputRef} accept=".xml" className="hidden" onChange={handleBulkUpload} />
            </label>
         </div>
       </div>
@@ -453,24 +478,18 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
       <div className="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl border border-gray-100 dark:border-slate-800 overflow-hidden">
         <div className="p-8 border-b border-gray-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/30">
           <div className="relative max-w-sm w-full">
-            <input type="text" placeholder="Search faculty by name, ID or email..." className="w-full pl-12 pr-6 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-[11px] font-black uppercase outline-none focus:ring-2 focus:ring-amber-400 transition-all shadow-sm" value={teacherSearch} onChange={e => setTeacherSearch(e.target.value)} />
+            <input type="text" placeholder="Search faculty..." className="w-full pl-12 pr-6 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-[11px] font-black uppercase outline-none focus:ring-2 focus:ring-amber-400 transition-all shadow-sm" value={teacherSearch} onChange={e => setTeacherSearch(e.target.value)} />
             <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             </div>
           </div>
-          
           <div className="flex flex-wrap items-center gap-3">
-            <select 
-              value={roleFilter} 
-              onChange={e => setRoleFilter(e.target.value)}
-              className="px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-[10px] font-black uppercase outline-none focus:ring-2 focus:ring-amber-400 shadow-sm dark:text-white"
-            >
+            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-[10px] font-black uppercase outline-none focus:ring-2 focus:ring-amber-400 shadow-sm dark:text-white">
               <option value="ALL">All Roles</option>
               {Object.entries(ROLE_DISPLAY_MAP).map(([role, label]) => (
                 <option key={role} value={role}>{label}</option>
               ))}
             </select>
-
             <div className="flex bg-white dark:bg-slate-950 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
               {(['ALL', 'PRIMARY', 'SECONDARY'] as const).map(section => (
                 <button key={section} onClick={() => setActiveSection(section)} className={`px-6 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${activeSection === section ? 'bg-[#001f3f] text-[#d4af37]' : 'text-slate-400'}`}>{section}</button>
@@ -483,10 +502,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
           <table className="w-full text-left">
             <thead>
               <tr className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] bg-slate-50/50 dark:bg-slate-800/50">
-                <th className="px-10 py-6">
-                   <div className="flex items-center space-x-2 cursor-pointer select-none group/sort" onClick={toggleSort}>
+                <th className="px-10 py-6" onClick={toggleSort}>
+                   <div className="flex items-center space-x-2 cursor-pointer select-none group/sort">
                       <span>Identity (Employee ID)</span>
-                      <div className={`transition-all duration-300 ${sortDirection === 'none' ? 'opacity-20 group-hover/sort:opacity-100' : 'opacity-100 text-[#d4af37]'}`}>
+                      <div className={`transition-all duration-300 ${sortDirection === 'none' ? 'opacity-20' : 'opacity-100 text-[#d4af37]'}`}>
                          {sortDirection === 'desc' ? (
                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
                          ) : (
@@ -506,22 +525,17 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
                 const isConfirming = confirmDeleteId === u.id;
                 const isSelf = u.id === currentUser.id;
                 const isTargetAdmin = u.role === UserRole.ADMIN;
-
                 return (
                   <tr key={u.id} className={`transition-all ${isEditing ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/30'}`}>
                     <td className="px-10 py-8">
                       <div className="flex items-center space-x-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs transition-transform ${isEditing ? 'bg-amber-400 text-[#001f3f]' : 'bg-[#001f3f] text-[#d4af37]'}`}>
-                          {u.name.substring(0,2)}
-                        </div>
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs transition-transform ${isEditing ? 'bg-amber-400 text-[#001f3f]' : 'bg-[#001f3f] text-[#d4af37]'}`}>{u.name.substring(0,2)}</div>
                         <div>
                           <p className="font-black text-sm text-[#001f3f] dark:text-white">{u.name} {isSelf && '(You)'}</p>
                           <div className="flex items-center space-x-2 mt-1">
                             <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{u.employeeId}</p>
                             {u.classTeacherOf && (
-                              <span className="text-[8px] font-black text-[#d4af37] border border-[#d4af37]/30 px-1.5 py-0.5 rounded bg-amber-50/5 uppercase tracking-[0.2em]">
-                                Class Teacher: {u.classTeacherOf}
-                              </span>
+                              <span className="text-[8px] font-black text-[#d4af37] border border-[#d4af37]/30 px-1.5 py-0.5 rounded bg-amber-50/5 uppercase tracking-[0.2em]">CT: {u.classTeacherOf}</span>
                             )}
                           </div>
                         </div>
@@ -529,26 +543,21 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
                     </td>
                     <td className="px-10 py-8 text-xs font-bold text-slate-500 italic dark:text-slate-400">{u.email}</td>
                     <td className="px-10 py-8">
-                      <span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border shadow-sm ${getRoleBadgeClasses(u.role)}`}>
-                        {ROLE_DISPLAY_MAP[u.role] || u.role}
-                      </span>
+                      <span className={`px-3 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border shadow-sm ${getRoleBadgeClasses(u.role)}`}>{ROLE_DISPLAY_MAP[u.role] || u.role}</span>
                     </td>
                     <td className="px-10 py-8 text-right space-x-5">
                       {isConfirming ? (
                         <div className="flex items-center justify-end space-x-3">
-                           <button type="button" onClick={(e) => executeDelete(u.id, e)} className="bg-red-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-lg shadow-red-200">PURGE</button>
-                           <button type="button" onClick={() => setConfirmDeleteId(null)} className="text-slate-400 text-[9px] font-black uppercase hover:text-slate-600 transition-colors">KEEP</button>
+                           <button type="button" onClick={(e) => executeDelete(u.id, e)} className="bg-red-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase">PURGE</button>
+                           <button type="button" onClick={() => setConfirmDeleteId(null)} className="text-slate-400 text-[9px] font-black uppercase">KEEP</button>
                         </div>
                       ) : (
                         <div className="flex items-center justify-end space-x-5">
-                          {/* Incharges cannot edit admins */}
                           {(!isTargetAdmin || isAdmin) && (
-                            <button type="button" onClick={() => startEdit(u)} className={`text-[10px] font-black uppercase tracking-widest transition-colors ${isEditing ? 'text-amber-500' : 'text-sky-600 hover:text-sky-800'}`}>
-                              {isEditing ? 'EDITING...' : 'UPDATE'}
-                            </button>
+                            <button type="button" onClick={() => startEdit(u)} className={`text-[10px] font-black uppercase tracking-widest ${isEditing ? 'text-amber-500' : 'text-sky-600 hover:text-sky-800'}`}>{isEditing ? 'EDITING...' : 'UPDATE'}</button>
                           )}
                           {!isSelf && u.id !== '1' && (!isTargetAdmin || isAdmin) && (
-                            <button type="button" onClick={() => setConfirmDeleteId(u.id)} className="text-[10px] font-black uppercase tracking-widest text-red-500 hover:text-red-700 transition-colors">DELETE</button>
+                            <button type="button" onClick={() => setConfirmDeleteId(u.id)} className="text-[10px] font-black uppercase tracking-widest text-red-500 hover:text-red-700">DELETE</button>
                           )}
                         </div>
                       )}
@@ -558,12 +567,6 @@ const UserManagement: React.FC<UserManagementProps> = ({ users, setUsers, config
               })}
             </tbody>
           </table>
-          {filteredTeachers.length === 0 && (
-            <div className="py-24 text-center">
-               <svg className="w-16 h-16 text-slate-100 dark:text-slate-800 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-               <p className="text-sm font-black text-slate-300 uppercase tracking-widest">No matching faculty found</p>
-            </div>
-          )}
         </div>
       </div>
     </div>

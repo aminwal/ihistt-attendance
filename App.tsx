@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { User, UserRole, AttendanceRecord, TimeTableEntry, SubstitutionRecord, SchoolConfig, TeacherAssignment, SubjectCategory, AppTab } from './types.ts';
-import { INITIAL_USERS, INITIAL_CONFIG, DAYS } from './constants.ts';
+import { INITIAL_USERS, INITIAL_CONFIG, DAYS, SCHOOL_NAME } from './constants.ts';
 import Login from './components/Login.tsx';
 import Dashboard from './components/Dashboard.tsx';
 import Sidebar from './components/Sidebar.tsx';
@@ -17,6 +17,7 @@ import { supabase } from './supabaseClient.ts';
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
+  const [dbLoading, setDbLoading] = useState(false);
   
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('ihis_dark_mode');
@@ -32,6 +33,61 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('ihis_attendance');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Database Sync on Initialization
+  useEffect(() => {
+    const fetchCloudData = async () => {
+      // Don't attempt fetch if the client is using placeholders
+      if (supabase.supabaseUrl.includes('placeholder-project')) return;
+
+      setDbLoading(true);
+      try {
+        // Fetch Users/Profiles
+        const { data: cloudUsers, error: userError } = await supabase
+          .from('profiles')
+          .select('*');
+        
+        if (!userError && cloudUsers && cloudUsers.length > 0) {
+          const mappedUsers: User[] = cloudUsers.map(u => ({
+            id: u.id,
+            employeeId: u.employee_id,
+            name: u.name,
+            email: u.email,
+            password: u.password,
+            role: u.role as UserRole,
+            classTeacherOf: u.class_teacher_of 
+          }));
+          setUsers(mappedUsers);
+        }
+
+        // Fetch Attendance Records
+        const { data: cloudAttendance, error: attError } = await supabase
+          .from('attendance')
+          .select('*');
+        
+        if (!attError && cloudAttendance) {
+          const mappedAtt: AttendanceRecord[] = cloudAttendance.map(a => ({
+            id: a.id,
+            userId: a.user_id,
+            userName: users.find(u => u.id === a.user_id)?.name || 'Unknown',
+            date: a.date,
+            checkIn: a.check_in,
+            checkOut: a.check_out,
+            isManual: a.is_manual,
+            isLate: a.is_late,
+            location: a.location
+          }));
+          setAttendance(mappedAtt);
+        }
+      } catch (e) {
+        console.error("Cloud Data Sync Failed:", e);
+      } finally {
+        setDbLoading(false);
+      }
+    };
+
+    fetchCloudData();
+  }, []);
 
   const [timetable, setTimetable] = useState<TimeTableEntry[]>(() => {
     const saved = localStorage.getItem('ihis_timetable');
@@ -335,7 +391,13 @@ const App: React.FC = () => {
         <Navbar user={currentUser} onLogout={() => setCurrentUser(null)} isDarkMode={isDarkMode} toggleDarkMode={() => setIsDarkMode(!isDarkMode)} />
         <main className="flex-1 overflow-y-auto p-4 md:p-8 dark:text-slate-200">
           <div className="min-h-full flex flex-col">
-            <div className="flex-1">
+            <div className="flex-1 pb-10">
+              {dbLoading && (
+                <div className="fixed top-20 right-8 z-50 flex items-center space-x-2 bg-white dark:bg-slate-900 px-4 py-2 rounded-xl shadow-lg border border-sky-100 animate-pulse">
+                  <div className="w-2 h-2 bg-sky-500 rounded-full animate-ping"></div>
+                  <span className="text-[10px] font-black uppercase text-sky-600">Cloud Syncing...</span>
+                </div>
+              )}
               {activeTab === 'dashboard' && <Dashboard user={currentUser} attendance={attendance} setAttendance={setAttendance} substitutions={substitutions} currentOTP={attendanceOTP} setOTP={setAttendanceOTP} />}
               {activeTab === 'history' && <AttendanceView user={currentUser} attendance={attendance} setAttendance={setAttendance} users={users} />}
               {activeTab === 'users' && isManagement && <UserManagement users={users} setUsers={setUsers} config={schoolConfig} currentUser={currentUser} />}
@@ -345,8 +407,12 @@ const App: React.FC = () => {
               {activeTab === 'config' && isAdmin && <AdminConfigView config={schoolConfig} setConfig={setSchoolConfig} />}
               {activeTab === 'deployment' && isAdmin && <DeploymentView />}
             </div>
-            <footer className="mt-12 py-6 border-t border-slate-200 dark:border-slate-800 text-center no-print">
-              <p className="text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.3em]">Developed by: Ahmed Minwal</p>
+            
+            <footer className="mt-auto py-6 border-t border-slate-200 dark:border-slate-800 text-center no-print px-4">
+              <p className="text-[9px] font-black text-[#001f3f] dark:text-slate-400 uppercase tracking-[0.3em] leading-relaxed">
+                <span className="opacity-40">{SCHOOL_NAME} © 2025</span><br/>
+                Developed by: <span className="text-[#d4af37]">Ahmed Minwal</span>
+              </p>
             </footer>
           </div>
         </main>
