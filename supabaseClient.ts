@@ -1,56 +1,46 @@
 import { createClient } from '@supabase/supabase-js';
 
 /**
- * Bulletproof environment variable resolution for Supabase.
- * This handles both Vite (import.meta.env) and Node/Sandbox (process.env) environments.
+ * Robust environment variable resolution for Supabase.
+ * Checks process.env, import.meta.env, window, and LocalStorage.
  */
 
 const getSupabaseConfig = () => {
-  let url = '';
-  let key = '';
-
-  // 1. Try process.env first (Standard for the AI Studio execution environment)
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
-      key = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
-    }
-  } catch (e) {
-    // process.env not available
-  }
-
-  // 2. Try import.meta.env if still missing (Standard for local Vite development)
-  if (!url || !key) {
+  const getVar = (name: string): string => {
     try {
-      // Use type assertion to access Vite-specific env property on import.meta
-      if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-        // We use explicit literal access for Vite's static replacement engine
-        url = url || (import.meta as any).env.VITE_SUPABASE_URL || '';
-        key = key || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
+      // 1. Check process.env (Node/AI Studio)
+      if (typeof process !== 'undefined' && process.env && process.env[name]) {
+        return process.env[name] as string;
       }
+      // 2. Check import.meta.env (Vite)
+      if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[name]) {
+        return (import.meta as any).env[name];
+      }
+      // 3. Check LocalStorage (User Manual Override)
+      const stored = localStorage.getItem(`IHIS_CFG_${name}`);
+      if (stored) return stored;
     } catch (e) {
-      // import.meta.env not available
+      // Ignore errors
     }
-  }
+    return '';
+  };
+
+  const url = getVar('VITE_SUPABASE_URL') || getVar('SUPABASE_URL');
+  const key = getVar('VITE_SUPABASE_ANON_KEY') || getVar('SUPABASE_ANON_KEY');
 
   return { url, key };
 };
 
 const { url: supabaseUrl, key: supabaseAnonKey } = getSupabaseConfig();
 
+// Use an informative log instead of an error to prevent user alarm during local-first operation
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error(
-    "CRITICAL CONFIGURATION ERROR: Supabase credentials not found.\n" +
-    "Checklist:\n" +
-    "1. Environment Variables must be named: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY\n" +
-    "2. If using Vercel, ensure these are added to Project Settings > Environment Variables.\n" +
-    "3. YOU MUST REDEPLOY on Vercel after adding variables for them to take effect."
-  );
+  console.info("IHIS: Operating in Local Mode. Cloud sync disabled.");
 } else {
-  console.info("Supabase infrastructure successfully linked.");
+  console.info("IHIS: Cloud Infrastructure Linked Successfully.");
 }
 
-// Initialize client with placeholders if keys are missing to prevent application crash at boot.
+// Initialize client with placeholders if keys are missing to prevent application crash.
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder-project.supabase.co', 
   supabaseAnonKey || 'placeholder-key'
